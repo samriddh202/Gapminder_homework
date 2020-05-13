@@ -1,0 +1,317 @@
+---
+title: "Assignment 7"
+Author: "Samriddh Gupta"
+output:
+  pdf_document: default
+  html_notebook: default
+  word_document: default
+---
+
+## Libraries
+```{r}
+library(tidyverse)
+library(XLConnect)
+library(openxlsx)
+library(countrycode)
+library(purrr)
+library(dplyr)
+library(ggplot2)
+library(gganimate)
+theme_set(theme_bw())
+library(modelr)
+library(broom)
+```
+
+
+## Part 1: Creating our own gapminder animation
+All the important URLS
+```{r}
+if(!file.exists("./data")) {dir.create("./data")}
+
+
+fileUrls <- c(
+  "https://docs.google.com/spreadsheet/pub?key=0AkBd6lyS3EmpdHo5S0J6ekhVOF9QaVhod05QSGV4T3c&output=xlsx",
+  "https://docs.google.com/spreadsheet/pub?key=phAwcNAVuyj2tPLxKvvnNPA&output=xlsx",
+  "https://docs.google.com/spreadsheet/pub?key=tSUr_yZVbM6a3AGJEq_Z2Pw&output=xlsx",
+  "https://docs.google.com/spreadsheet/pub?key=0ArfEDsV3bBwCdHBzUVVSMDlTX1ZCUnNJQ3ZFdkFXVFE&output=xlsx",
+  "https://docs.google.com/spreadsheet/pub?key=phAwcNAVuyj0XOoBL_n5tAQ&output=xlsx")
+
+var_names <- c("GDP","life_expectancy", "alt_GDP", "blood press", "population")
+
+```
+
+get_clean function
+```{r}
+
+round_df <- function(x, digits) {
+    # round all numeric variables
+    # x: data frame 
+    # digits: number of digits to round
+    numeric_columns <- sapply(x, mode) == 'numeric'
+    x[numeric_columns] <-  round(x[numeric_columns], digits)
+    x
+}
+
+get_clean <- function(url_in, var_name){
+  tmp = tempfile(fileext = ".xlsx")
+  download.file(url_in, destfile = tmp, mode="wb")
+  data<-readWorkbook(tmp)
+  
+  data1<-data %>% 
+    rename(country=colnames(data[1])) %>% 
+    pivot_longer(-country,names_to = "year",values_to = var_name) %>% 
+    na.omit()
+  
+  data2<-round_df(data1,0)
+  data2$year<-as.numeric(data2$year)
+  return(data2)
+}
+
+setwd("data/")
+out1 <- get_clean(fileUrls[1],var_names[1])
+head(out1)
+
+
+
+
+```
+
+```{r}
+all_data<-map2(fileUrls,var_names,get_clean)
+head(all_data)
+
+```
+
+2.	 Join the outputs into one tibble with a column for each variable (hint – perhaps use one of your purrr functions)
+
+```{r}
+dat1<-all_data[[1]]
+dat2<-all_data[[2]]
+dat3<-all_data[[3]]
+dat4<-all_data[[4]]
+dat5<-all_data[[5]]
+
+dat6<-full_join(dat2,dat1)
+dat7<-full_join(dat3,dat4)
+dat8<-full_join(dat6,dat7)
+join_data<-full_join(dat8,dat5)
+join_data
+```
+
+
+```{r}
+new_gapminder<-join_data %>% 
+  mutate(continent=countrycode(sourcevar = country,
+                            origin = "country.name",
+                            destination = "continent"))
+
+
+```
+
+
+```{r}
+new_gapminder<-new_gapminder %>% 
+  mutate(continent=case_when(country=="South Yemen (former)"~"Asia",
+                             country=="Akrotiri and Dhekelia"~"Europe",
+                             country=="Central African Rep."~"Africa",
+                             country=="Channel Islands"~"Europe",
+                             country=="Cocos Island"~"Asia",
+                             country=="Czechoslovakia"~"Europe",
+                             country=="East Germany"~"Europe",
+                             country=="Eritrea and Ethiopia"~"Africa",
+                             country=="Kosovo"~"Europe",
+                             country=="North Yemen (former)"~"Asia",
+                             country=="North Yemen (former)"~"Americas",
+                             country=="St. Martin"~"Asia",
+                             country=="Yugoslavia"~"Europe",
+                             country=="Serbia and Montenegro"~"Asia",
+                             TRUE~continent))
+
+```
+
+```{r}
+new_gapminder %>%
+  arrange(country, year)
+
+```
+
+## Just for my practice
+```{r}
+p<-new_gapminder %>% 
+  filter(year=="2002") %>% 
+  arrange(desc(population)) %>% 
+  ggplot(aes(x=GDP,y=life_expectancy))+
+  geom_point(aes(size=population,fill=continent),shape=21)+
+  scale_x_log10(breaks = 2^(-1:7)*1000)+
+  scale_size(range = c(1,20),guide=F)+
+  labs(
+    x="Income (GDP / capita)",
+    y="Life Expectancy (years)"
+  )+
+  theme_bw()
+p
+```
+
+## animation
+
+```{r}
+plot_data<-new_gapminder %>% 
+  select(country,continent,year,GDP,life_expectancy,population) %>% 
+  drop_na()
+
+
+p <- ggplot(
+  plot_data, 
+  aes(x = GDP, y=life_expectancy)) +
+  geom_point(aes(size = population, fill = continent),shape=21)+
+  labs(
+    x="Income (GDP / capita",
+    y="Life Expectancy (years)"
+  )+
+  theme_bw()+
+  scale_x_log10(breaks = 2^(-1:7)*1000)+
+  scale_size(range = c(1,20),guide=F)
+
+#p + transition_time(year) +
+#  labs(title = "Year: {frame_time}")
+
+p<-p+transition_states(year,transition_length = 1,state_length = 1)+
+  ggtitle("year Showing {closest_state}",subtitle = "Frame {frame} of {nframes}")
+
+p
+
+  
+```
+
+
+## Part 2: Analyze life expectancy as function of GDP 
+
+1.	Now, model life expectancy for each country as a function of GDP? (hint – use plot_data from your plot above) 
+```{r}
+
+plot_data %>%
+  ggplot(aes(GDP, life_expectancy, group = country)) +
+  geom_line(alpha = 1/3)+
+  scale_x_log10(breaks = 2^(-1:7)*1000)
+
+
+by_country <- plot_data %>%
+  group_by(country, continent) %>%
+  nest()
+
+by_country
+
+```
+
+
+```{r}
+country_mod <- function(df){
+  lm(life_expectancy ~ GDP, data = df)
+}
+
+by_country <- by_country %>%
+  mutate(model = map(data, country_mod))
+by_country
+```
+
+2.	Graph your residuals by country and facet by continent. 
+```{r}
+by_country <- by_country %>%
+  mutate(resids = map2(data, model, add_residuals))
+by_country
+
+resids <- unnest(by_country, resids)
+resids
+```
+
+```{r}
+resids %>%
+  ggplot(aes(GDP,resid)) +
+  geom_line(aes(group = country, color = continent), alpha = 1/3) +
+  scale_x_log10(breaks = 2^(-1:7)*1000)+
+  geom_smooth(se = FALSE)
+```
+
+```{r}
+resids %>%
+  ggplot(aes(GDP, resid, group = country)) +
+  geom_line(alpha = 1/3) +
+  scale_x_log10(breaks = 2^(-1:7)*1000)+
+  facet_wrap(~continent)
+```
+
+3.	Are there countries and continents for which this is a particularly bad model? Use broom::glance to make this determination and provide an explanation for your conclusions. 
+```{r}
+glance <- by_country %>%
+  mutate(glance = map(model, glance)) %>%
+  unnest(glance, .drop = TRUE)
+glance
+```
+
+```{r}
+
+glance %>%
+  arrange(r.squared)
+```
+```{r}
+bad_fit <- filter(glance, r.squared < 0.2)
+new_gapminder %>%
+  semi_join(bad_fit, by = "country") %>%
+  ggplot(aes(GDP, life_expectancy, colour = country)) +
+  scale_x_log10(breaks = 2^(-1:7)*1000)+
+  geom_line()
+```
+# these are bad fits as there rsquare value is less than 0.2 which means there is less corelation between the life Expectency and GDP.
+
+
+## Part 3:  
+a.	Transform year so that it has a mean of 0
+```{r}
+transform_data<-plot_data
+
+transform_data$scale_year<-scale(transform_data$year)
+mean(transform_data$scale_year)
+
+```
+##close to zero
+
+b.	Model with a quadratic polynomial. How can you interpret the coefficients of the quadratic for Belgium? 
+```{r}
+country_mod1 <- function(df){
+  lm(life_expectancy ~ year+scale_year+population, data = df)
+}
+
+by_country <- transform_data %>%
+  group_by(country, continent) %>%
+  nest()
+
+by_country <- by_country %>%
+  mutate(model = map(data, country_mod1))
+
+Belgium<-by_country %>% 
+  filter(country=="Belgium")
+
+Belgium$model
+```
+the coeffxicients here tells yes about how each variable effect the life_expectancy and from what we can see here, scale_year does not effect the life_expectancy and other have less relation as well.
+
+c.	Use glance() to identify all countries that do not fit the model well and plot the residuals for the countries that do not fit the model well. 
+```{r}
+by_country <- by_country %>%
+  mutate(resids = map2(data, model, add_residuals))
+by_country
+
+resids <- unnest(by_country, resids)
+resids
+
+resids %>%
+  ggplot(aes(year,resid)) +
+  geom_line(aes(group = country, color = continent), alpha = 1/3) +
+  geom_smooth(se = FALSE)
+
+#glance1 <- by_country %>%
+#  mutate(glance = map(model, glance)) %>%
+#  unnest(glance, .drop = TRUE)
+
+
+```
